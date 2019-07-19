@@ -53,14 +53,60 @@ pin = stim100k(:).';
 clear stim100k
 
 simdur = ceil(T*1.2/psthbinwidth_mr)*psthbinwidth_mr;
+psthbins = round(psthbinwidth_mr*Fs);
+
+neurogram_ft=zeros(1,simdur*Fs);%zeros(numcfs,length(psth_ft));
+neurogram_Sout=zeros(1,simdur*Fs);%zeros(numcfs,1);
+neurogram_mr=zeros(1,(simdur*Fs)/psthbins);%zeros(numcfs,length(psth_mr));
+
+%SERIAL START
+%tic;
+%for CFlp = 1:numcfs
+%  [neurogram_ft(CFlp,:),neurogram_mr(CFlp,:),neurogram_Sout(CFlp,:)]=cflp_fun(CFlp,CFs,cohcs,cihcs,numsponts_healthy, ...
+%                                                sponts,tabss,trels,pin,nrep, ...
+%                                                Fs,simdur,species,psthbinwidth_mr, ...
+%                                                numcfs,noiseType,implnt,smw_ft, ...
+%                                                smw_mr,psthbins);
+%end
+%toc
+%SERIAL END
+
+%PARALLEL START
+tic;
+nproc=4;
+[neurogram_ft,neurogram_mr,neurogram_Sout]=pararrayfun(nproc,@(CFlp)cflp_fun(CFlp,CFs,cohcs,cihcs,numsponts_healthy, ...
+                                                sponts,tabss,trels,pin,nrep, ...
+                                                Fs,simdur,species,psthbinwidth_mr, ...
+                                                numcfs,noiseType,implnt,smw_ft, ...
+                                                smw_mr,psthbins), ...
+                                                [1:numcfs],'UniformOutput',false);
+toc
+neurogram_ft=cell2mat(neurogram_ft');
+neurogram_Sout=cell2mat(neurogram_Sout');
+neurogram_mr=cell2mat(neurogram_mr');
+%PARALLEL END
 
 
-for CFlp = 1:numcfs
-    disp(['CFlp iteration: ', num2str(CFlp), ' of: ',num2str(numcfs)]);
-    CF = CFs(CFlp);
-    cohc = cohcs(CFlp);
-    cihc = cihcs(CFlp);
-    
+neurogram_ft = neurogram_ft(:,1:windur_ft/2:end); % 50% overlap in Hamming window
+t_ft = 0:windur_ft/2/Fs:(size(neurogram_ft,2)-1)*windur_ft/2/Fs; % time vector for the fine-timing neurogram
+neurogram_mr = neurogram_mr(:,1:windur_mr/2:end); % 50% overlap in Hamming window
+t_mr = 0:windur_mr/2*psthbinwidth_mr:(size(neurogram_mr,2)-1)*windur_mr/2*psthbinwidth_mr; % time vector for the mean-rate neurogram
+t_Sout = 0:1/Fs:(size(neurogram_Sout,2)-1)/Fs; % time vector for the synapse output neurogram
+
+
+
+function [neurogram_ft,neurogram_mr,neurogram_Sout]=cflp_fun(CFlp,CFs,cohcs,cihcs,numsponts_healthy, ...
+                                                         sponts,tabss,trels,pin, ...
+                                                         nrep,Fs,simdur,species, ...
+                                                         psthbinwidth_mr,numcfs, ...
+                                                         noiseType,implnt,smw_ft, ...
+                                                         smw_mr,psthbins)
+                                                         
+   disp(['CFlp iteration: ', num2str(CFlp), ' of: ',num2str(numcfs)]);
+   CF = CFs(CFlp);
+   cohc = cohcs(CFlp);
+   cihc = cihcs(CFlp);
+
     numsponts = round([1 1 1].*numsponts_healthy); % Healthy AN
     %     numsponts = round([0.5 0.5 0.5].*numsponts_healthy); % 50% fiber loss of all types
     %     numsponts = round([0 1 1].*numsponts_healthy); % Loss of all LS fibers
@@ -72,43 +118,35 @@ for CFlp = 1:numcfs
     
     vihc = model_IHC_BEZ2018(pin,CF,nrep,1/Fs,simdur,cohc,cihc,species);
 
-    psthbins = round(psthbinwidth_mr*Fs);
-    neurogram_ft=zeros(numcfs,size(vihc,2));%zeros(numcfs,length(psth_ft));
-    neurogram_Sout=zeros(numcfs,size(vihc,2));%zeros(numcfs,1);
-    neurogram_mr=zeros(numcfs,size(vihc,2)/psthbins);%zeros(numcfs,length(psth_mr));
+    neurogram_ft=zeros(1,size(vihc,2));%zeros(numcfs,length(psth_ft));
+    neurogram_Sout=zeros(1,size(vihc,2));%zeros(numcfs,1);
+    neurogram_mr=zeros(1,size(vihc,2)/psthbins);%zeros(numcfs,length(psth_mr));
 
-%     tic
-% SERIAL
-%    for spontlp = 1:sum(numsponts)        
-%        [neurogram_ft,neurogram_mr,neurogram_Sout]=spont_fun(spontlp,CFlp,numcfs,numsponts, ...
-%                  sponts_concat,tabss_concat,trels_concat, ...
-%                  vihc,CF,nrep,Fs,noiseType,implnt, ...
-%                  psthbinwidth_mr, psthbins, ...
-%                  smw_ft, smw_mr, ...
-%                  neurogram_ft,neurogram_Sout,neurogram_mr);    
-%    end
 
-%PARALLEL
-    nproc=4;
-    [neurogram_ft,neurogram_mr,neurogram_Sout]=pararrayfun(nproc,@(spontlp)spont_fun(spontlp,CFlp,numcfs,numsponts, ...
-                  sponts_concat,tabss_concat,trels_concat, ...
-                  vihc,CF,nrep,Fs,noiseType,implnt, ...
-                  psthbinwidth_mr,psthbins,  ...
-                  smw_ft, smw_mr, ...
-                  neurogram_ft,neurogram_Sout,neurogram_mr), ...
-                  [1:sum(numsponts)],'UniformOutput',false);
-%     spont_dur=toc;
-%     disp(['spont calc duration: ' num2str(spont_dur)]);
-                 
-end
+    for spontlp = 1:sum(numsponts)
+        
+        %gdisp(['CFlp = ' int2str(CFlp) '/' int2str(numcfs) '; spontlp = ' int2str(spontlp) '/' int2str(sum(numsponts))])
+        
+        % flush the output for the display of the coutput in Octave
+        if exist ('OCTAVE_VERSION', 'builtin') ~= 0
+            fflush(stdout);
+        end
+        spont = sponts_concat(spontlp);
+        tabs = tabss_concat(spontlp);
+        trel = trels_concat(spontlp);
+        
+        [psth_ft,meanrate,varrate,synout] = model_Synapse_BEZ2018(vihc,CF,nrep,1/Fs,noiseType,implnt,spont,tabs,trel);
+        psthbins = round(psthbinwidth_mr*Fs);  % number of psth_ft bins per psth bin
+        psth_mr = sum(reshape(psth_ft,psthbins,length(psth_ft)/psthbins));
+        
+        %if spontlp == 1
+        %    neurogram_ft(CFlp,:) = filter(smw_ft,1,psth_ft);
+        %    neurogram_Sout(CFlp,:) = synout;
+        %    neurogram_mr(CFlp,:) = filter(smw_mr,1,psth_mr);
+        %else
 
-neurogram_ft = cell2mat(neurogram_ft);
-neurogram_mr = cell2mat(neurogram_mr);
-neurogram_Sout = cell2mat(neurogram_Sout);
-
-neurogram_ft = neurogram_ft(:,1:windur_ft/2:end); % 50% overlap in Hamming window
-t_ft = 0:windur_ft/2/Fs:(size(neurogram_ft,2)-1)*windur_ft/2/Fs; % time vector for the fine-timing neurogram
-neurogram_mr = neurogram_mr(:,1:windur_mr/2:end); % 50% overlap in Hamming window
-t_mr = 0:windur_mr/2*psthbinwidth_mr:(size(neurogram_mr,2)-1)*windur_mr/2*psthbinwidth_mr; % time vector for the mean-rate neurogram
-t_Sout = 0:1/Fs:(size(neurogram_Sout,2)-1)/Fs; % time vector for the synapse output neurogram
-
+        neurogram_ft = neurogram_ft+filter(smw_ft,1,psth_ft);
+        neurogram_Sout = neurogram_Sout+synout;
+        neurogram_mr = neurogram_mr+filter(smw_mr,1,psth_mr);
+        %end
+    end
